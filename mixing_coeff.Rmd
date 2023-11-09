@@ -145,7 +145,8 @@ FeaturePlot(bcr_cpg, reduction = "umap", features = c("Xbp1", "Sdc1"))
 
 Optimizing
 - calculate distances in neighbourhood graph for all cells that have a barcode, 20 nearest neighbours from pre-calculated neighbourhood graph
-
+https://rdrr.io/github/satijalab/seurat/man/MixingMetric.html
+https://rdrr.io/github/satijalab/seurat/src/R/integration.R
 
 ```{r}
 mixingCoefficient <- function(object, 
@@ -285,6 +286,11 @@ intra_clonal_distance <- function(object, reduction, dims, clones, clone_id = "c
 }
 ```
 
+Calculate inter-clonal mixing score. 
+
+14s for 100 clones. 
+
+The clone names must be valid R variables for the function to be fast. 
 
 ```{r}
 reduction = "pca"
@@ -295,13 +301,15 @@ k = 0.5
 clones <- bcr_cpg@meta.data %>%
   filter(clone_id != "No_contig") %>%
   count(clone_id) %>%
+  # filter(n > 3) %>%
+  # slice_sample(n = 100) %>%
   arrange(desc(n)) %>%
-  head(50) %>%
+  head(150) %>%
   pull(clone_id)
 
 start <- Sys.time()
 set.seed(1)
-df <- mixingCoefficient(object, reduction, dims, k, clones, cores=10, rep=3)
+df <- mixingCoefficient(object, reduction, dims, k, clones, cores=10, rep=3, clone_id = "clone_id")
 end <- Sys.time()
 end - start
 ```
@@ -565,19 +573,26 @@ ggsave("results/pairs_plot_top100.pdf")
 
 
 ```{r}
-df_homogeneity_similarity <- df %>%
-  rownames_to_column(var = "clone1") %>%
-  pivot_longer(cols = -clone1, names_to = "clone2", values_to = "mixing_coefficient") %>%
-  filter(mixing_coefficient != 1)
-
-df_homogeneity_similarity <- merge(df_homogeneity_similarity, as.data.frame(mean_intra_clone_distances), by.x = "clone1", by.y="row.names")
-df_homogeneity_similarity <- rename(df_homogeneity_similarity, mean_intra_clone_distances_clone1 = "mean_intra_clone_distances")
-
-df_homogeneity_similarity <- merge(df_homogeneity_similarity, as.data.frame(mean_intra_clone_distances), by.x = "clone2", by.y="row.names")
-df_homogeneity_similarity <- rename(df_homogeneity_similarity, mean_intra_clone_distances_clone2 = "mean_intra_clone_distances")
-
-df_homogeneity_similarity <- merge(df_homogeneity_similarity, count(bcr_cpg@meta.data, clone_id, name = "size_clone1"), by.x = "clone1", by.y="clone_id")
+df_homogeneity_similarity %>%
+  ggplot(aes(x=mixing_coefficient, y=pca_distance, color=abs_median_diff)) +
+  geom_point()
 ```
+
+
+Clones with small distance of means can have low mixing score if e.g. large difference in intra-clonal homogeneity
+
+Negative correlation of intra-clonal heterogeneity and and mixing score for clones with small PCA distance. 
+
+```{r fig.height=2.5}
+df_homogeneity_similarity %>%
+  filter(pca_distance < 10) %>%
+  ggplot(aes(x=mixing_coefficient, y=abs_median_diff)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_bw()
+```
+
+
 
 ```{r}
 ggplot(df_homogeneity_similarity, aes(mixing_coefficient, mean_intra_clone_distances_clone1 - mean_intra_clone_distances_clone2, color=size_clone1)) +
@@ -839,6 +854,23 @@ DimPlot(bcr_cpg, reduction = "UMAP", dims = c(1, 2), group.by = "mixing_score_km
 DimPlot(bcr_cpg, reduction = "UMAP", dims = c(1, 2), group.by = "celltype", shuffle = T) + coord_equal()
 ```
 
+
+
+<!-- ```{r} -->
+<!-- clone_pc_means_dist <- as.data.frame(as.matrix(dist(clone_pc_means))) -->
+<!-- colnames(clone_pc_means_dist) <- clone_pc_means$clone_id -->
+<!-- rownames(clone_pc_means_dist) <- clone_pc_means$clone_id -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- clone_pc_means_dist_df <- clone_pc_means_dist %>% -->
+<!--   rownames_to_column(var = "clone1") %>% -->
+<!--   pivot_longer(cols = -clone1, names_to = "clone2", values_to = "pca_distance") %>% -->
+<!--   filter(pca_distance != 1) -->
+
+<!-- df_homogeneity_similarity <- merge(df_homogeneity_similarity, clone_pc_means_dist_df, by=c("clone1", "clone2")) -->
+<!-- ``` -->
+
 ```{r fig.height=4, fig.width=5}
 df_homogeneity_similarity %>%
   ggplot(aes(mixing_coefficient, pca_distance, colour=abs(mean_intra_clone_distances_clone1 - mean_intra_clone_distances_clone2))) +
@@ -847,7 +879,7 @@ df_homogeneity_similarity %>%
 ```
 
 
-```{r}
+```{r fig.width=10, fig.height=5}
 bcr_cpg@meta.data %>%
   filter(clone_id %in% clones) %>%
   merge(clone_pc_means_kmeans$cluster, by.x = "clone_id", by.y = "row.names") %>%
@@ -870,5 +902,34 @@ table(merge(
 ```
 
 
+
+### WHat is similarity score > 1?
+
+```{r}
+dim(df_homogeneity_similarity)
+df_homogeneity_similarity %>%
+  arrange(desc(mixing_coefficient)) %>%
+  filter(mixing_coefficient > 1)
+```
+
+```{r}
+clones_larger_1 <- df_homogeneity_similarity %>%
+  arrange(desc(mixing_coefficient)) %>%
+  head(1) %>%
+  tail(1) %>%
+  select(clone1, clone2) %>%
+  unlist()
+
+
+clones_larger_1_highlight <- lapply(clones_larger_1, function(x) rownames(bcr_cpg@meta.data[bcr_cpg@meta.data$clone_id == x, ]))
+names(clones_larger_1_highlight) <- clones_larger_1
+
+DimPlot(
+  bcr_cpg,
+  reduction = "UMAP",
+  cells.highlight = clones_larger_1_highlight,
+  cols.highlight = c("blue", "red", "green", "yellow", "orange")
+) + coord_fixed(ratio = 1)
+```
 
 
