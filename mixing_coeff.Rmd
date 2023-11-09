@@ -95,6 +95,15 @@ bcr_cpg <- readRDS("data/cpg_processed.rds")
 ```
 
 ```{r}
+bcr_cpg$clone_id_pipe <- bcr_cpg$clone_id
+bcr_cpg$clone_id <- str_replace_all(bcr_cpg$clone_id, pattern = "\\|", ".")
+```
+
+```{r}
+bcr_cpg@meta.data$cell_id <- rownames(bcr_cpg@meta.data)
+```
+
+```{r}
 DimPlot(bcr_cpg, reduction = "UMAP", group.by = "originalexp_snn_res.0.2") + coord_fixed(ratio = 1)
 DimPlot(bcr_cpg, reduction = "UMAP", group.by = "celltype") + coord_fixed(ratio = 1)
 ```
