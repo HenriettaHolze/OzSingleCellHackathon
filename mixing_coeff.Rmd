@@ -336,24 +336,77 @@ hist(as.matrix(df_shuffled))
 
 ```{r}
 hist(as.matrix(df))
-max(as.matrix(df), na.rm = T)
+```
+
+Calculate intra-clonal heterogeneity score. 
+
+```{r}
+reduction = "pca"
+dims=seq(1, 20)
+object=bcr_cpg
+
+clones <- bcr_cpg@meta.data %>%
+  filter(clone_id != "No_contig") %>%
+  count(clone_id) %>%
+  arrange(desc(n)) %>%
+  head(1000) %>%
+  pull(clone_id)
+```
+
+```{r}
+intra_clone_distances <- intra_clonal_distance(object, reduction, dims, clones)
+```
+
+Check correlation of intra-clonal heterogeneity with clone size.
+
+```{r}
+intra_clone_distances_df <- as.data.frame(t(as.data.frame(intra_clone_distances)))
+colnames(intra_clone_distances_df) <- c("mean", "median", "sd")
+```
+
+```{r}
+intra_clone_distances_df <-
+  merge(
+    intra_clone_distances_df,
+    count(bcr_cpg@meta.data, clone_id, name = "clone_size"),
+    by.x = "row.names",
+    by.y = "clone_id"
+  )
+rownames(intra_clone_distances_df) <-
+  intra_clone_distances_df$Row.names
+intra_clone_distances_df$Row.names <- NULL
+```
+
+```{r}
+GGally::ggpairs(
+  intra_clone_distances_df,
+  aes(alpha = 0.2),
+  lower = list(
+    combo = GGally::wrap("dot", alpha = 0.4, size = 0.5),
+    continuous = GGally::wrap("smooth", alpha = 0.3, size = 0.5)
+  ),
+  progress = F
+)
+```
+
+Find most and least homogeneous clone.
+
+```{r}
+which(mean_intra_clone_distances == max(mean_intra_clone_distances))
+which(mean_intra_clone_distances == min(mean_intra_clone_distances))
 ```
 
 
-
 ```{r}
-hist(as.matrix(mean_intra_clone_distances))
-```
-
-```{r}
-write.csv(df, "results/mixing_coefficient_cpg_bc1_top30.csv")
-write.csv(df, "results/mixing_coefficient_cpg_top50.csv")
+# write.csv(df, "results/mixing_coefficient_cpg_bc1_top30.csv")
+# write.csv(df, "results/mixing_coefficient_cpg_top50.csv")
 ```
 
 
 ```{r}
 h <- heatmap(as.matrix(df), symm = T, cexRow = 0.4, cexCol = 0.4, keep.dendro=TRUE)
 ```
+
 ```{r}
 row.clusters = as.hclust(h$Rowv)
 cluster_anno <- cutree(row.clusters, k=4)  # break into k=3 clusters
@@ -365,30 +418,149 @@ df %>%
   rownames_to_column() %>%
   pivot_longer(cols = -rowname) %>%
   filter(value != 1) %>%
-  arrange(desc(value))
-```
-
-
-Distribution of similarity scores. 
-
-```{r}
-hist(as.matrix(df))
+  arrange(desc(value)) %>%
+  head()
 ```
 
 
 
+```{r}
+count(bcr_cpg@meta.data, clone_id)
+```
 
 
-
-Find most and least homogeneous clone.
+Combine intra-clonal heterogeneity with inter-clonal mixing score. 
 
 ```{r}
-which(mean_intra_clone_distances == max(mean_intra_clone_distances))
-which(mean_intra_clone_distances == min(mean_intra_clone_distances))
+df_homogeneity_similarity <- df %>%
+  rownames_to_column(var = "clone1") %>%
+  pivot_longer(cols = -clone1,
+               names_to = "clone2",
+               values_to = "mixing_coefficient") %>%
+  filter(mixing_coefficient != 1)
+
+df_homogeneity_similarity <-
+  merge(
+    df_homogeneity_similarity,
+    as.data.frame(intra_clone_distances_df),
+    by.x = "clone1",
+    by.y = "row.names",
+    all.x = T
+  )
+df_homogeneity_similarity <-
+  rename(
+    df_homogeneity_similarity,
+    mean_clone1 = "mean",
+    median_clone1 = "median",
+    sd_clone1 = "sd",
+    
+  )
+
+df_homogeneity_similarity <-
+  merge(
+    df_homogeneity_similarity,
+    as.data.frame(intra_clone_distances_df),
+    by.x = "clone2",
+    by.y = "row.names",
+    all.x = T
+  )
+df_homogeneity_similarity <-
+  rename(
+    df_homogeneity_similarity,
+    mean_clone2 = "mean",
+    median_clone2 = "median",
+    sd_clone2 = "sd",
+    size_clone1 = "clone_size.x",
+    size_clone2 = "clone_size.y"
+  )
+```
+
+Get mean PC space for top50 clones
+
+```{r}
+cells_df <-
+  object@meta.data %>% filter(clone_id %in% clones) %>% select(clone_id, cell_id)
+
+embeddings <- Embeddings(object = object[[reduction]])[, dims]
+
+clone_pc_means <- as.data.frame(embeddings) %>%
+  rownames_to_column(var = "cell_id") %>%
+  merge(cells_df, by="cell_id") %>%
+  group_by(clone_id) %>%
+  summarise(across(where(is.numeric), mean)) %>%
+  as.data.frame()
+
+rownames(clone_pc_means) <- clone_pc_means$clone_id
+clone_pc_means$clone_id <- NULL
+
+clone_pc_means_dist <- as.data.frame(as.matrix(dist(clone_pc_means)))
 ```
 
 ```{r}
-count(bcr_cpg_contig@meta.data, clone_id)
+clone_pc_means_dist_df <- clone_pc_means_dist %>%
+  rownames_to_column(var = "clone1") %>%
+  pivot_longer(cols = -clone1, names_to = "clone2", values_to = "pca_distance") %>%
+  filter(pca_distance != 1)
+
+df_homogeneity_similarity <- merge(df_homogeneity_similarity, clone_pc_means_dist_df, by=c("clone1", "clone2"))
+head(df_homogeneity_similarity)
+```
+
+```{r}
+df_homogeneity_similarity <- df_homogeneity_similarity %>%
+  mutate(median_diff = log(median_clone1 / median_clone2))
+
+df_homogeneity_similarity <- df_homogeneity_similarity %>%
+  mutate(abs_median_diff = abs(median_diff))
+
+df_homogeneity_similarity <- df_homogeneity_similarity %>%
+  mutate(mean_median = (median_clone1 + median_clone2) / 2)
+
+df_homogeneity_similarity <- df_homogeneity_similarity %>%
+  mutate(size_diff = log(size_clone1 / size_clone2))
+
+df_homogeneity_similarity <- df_homogeneity_similarity %>%
+  mutate(abs_size_diff = abs(size_diff))
+
+df_homogeneity_similarity <- df_homogeneity_similarity %>%
+  mutate(mean_size = (size_clone1 + size_clone2) / 2)
+```
+
+```{r}
+df_homogeneity_similarity
+```
+
+
+
+
+```{r fig.height=8}
+GGally::ggpairs(
+  df_homogeneity_similarity[c(3, 12, 14, 15, 17, 18)],
+  progress = F,
+  lower = list(
+    # continuous = GGally::wrap("points", alpha = 0.3, size = 0.1),
+    combo = GGally::wrap("dot", alpha = 0.4, size = 0.2),
+    continuous = GGally::wrap("smooth", alpha = 0.3, size = 0.1)
+  )
+) +
+  theme_bw()
+ggsave("results/pairs_plot_top100.pdf")
+```
+
+
+```{r fig.height=6}
+GGally::ggpairs(
+  df_homogeneity_similarity[c(3, 12, 14, 17)],
+  progress = F,
+  lower = list(
+    # continuous = GGally::wrap("points", alpha = 0.3, size = 0.1),
+    combo = GGally::wrap("dot", alpha = 0.4, size = 0.2),
+    continuous = GGally::wrap("smooth", alpha = 0.3, size = 0.1)
+  ),
+  upper = list(method = "spearman")
+) +
+  theme_bw()
+ggsave("results/pairs_plot_top100.pdf")
 ```
 
 
