@@ -146,7 +146,8 @@ mixingCoefficient <- function(object,
                               clones,
                               cores = 1,
                               max_cells = 50,
-                              rep = 1) {
+                              rep = 1,
+                              clone_id = "clone_id") {
     clones <- as.character(clones)
     
     # get embedding with specified dimensions from Seurat object
@@ -154,9 +155,10 @@ mixingCoefficient <- function(object,
     
     # dataframe of cell IDs and clone IDs
     cells_df <- object@meta.data %>%
+      select(-cell_id) %>%
       rownames_to_column(var = "cell_id") %>%
-      filter(clone_id %in% clones) %>%
-      select(clone_id, cell_id)
+      filter(!!as.name(clone_id) %in% clones) %>%
+      select(!!as.name(clone_id), cell_id)
     
     # subset embedding to cells from selected clones
     embeddings <- embeddings[cells_df$cell_id, ]
@@ -166,7 +168,7 @@ mixingCoefficient <- function(object,
     dist_matrix <- as.matrix(dist_matrix)
     
     # create clone to cell_ids dict
-    clone_to_cell_dics <- split(cells_df$cell_id, cells_df$clone_id)
+    clone_to_cell_dics <- split(cells_df$cell_id, cells_df[[clone_id]])
     
     # prepare empty results dataframe
     df_scores <-
@@ -174,7 +176,7 @@ mixingCoefficient <- function(object,
     
     clone_index_pairs <-
       as.list(as.data.frame(t(
-        permutations(
+        gtools::permutations(
           n = length(clones),
           r = 2,
           repeats.allowed = F
@@ -245,31 +247,32 @@ mixingCoefficient <- function(object,
   }
 ```
 
-Score for homogeneity: average distance (including cell itself)
+Score for intra-clonal heterogeneity: mean, median and standard deviation of distance between cells in a clone.
 
 ```{r}
-intra_clonal_distance <- function(object, reduction, dims, clones) {
-  mean_intra_clone_distances <- c()
+intra_clonal_distance <- function(object, reduction, dims, clones, clone_id = "clone_id") {
+  intra_clone_distances <- list()
   
   embeddings <- Embeddings(object = object[[reduction]])[, dims]
   
   for (c_i in seq(length(clones))) {
     c = clones[c_i]
     
+    # identify which cells belong to cone
     cells <-
-      object@meta.data %>% filter(clone_id %in% c) %>% rownames_to_column("cell") %>% pull(cell)
+      object@meta.data %>%
+      filter(!!as.name(clone_id) %in% c) %>%
+      rownames_to_column("cell") %>%
+      pull(cell)
     
-    # get neighbourhood graph for all cells
-    nn <- nn2(data = embeddings[cells,],
-              k = length(cells),
-              eps = eps)
-    
-    
-    mean_intra_clone_distances <- c(mean_intra_clone_distances, median(nn$nn.dists))
+    # calculate distance matrix between cells in a clone
+    dist_matrix <- dist(embeddings[cells,])
+    # calculate mean, median and sd of distances
+    intra_clone_distances[[as.character(c)]] <- c(mean(dist_matrix), median(dist_matrix), sd(dist_matrix))
   }
   
-  names(mean_intra_clone_distances) <- clones
-  return(mean_intra_clone_distances)
+  # returns a names list
+  return(intra_clone_distances)
 }
 ```
 
