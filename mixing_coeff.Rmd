@@ -306,10 +306,33 @@ end <- Sys.time()
 end - start
 ```
 
+Random background of mixing score
+
 ```{r}
-mean_intra_clone_distances <- intra_clonal_distance(object, reduction, dims, clones)
+bcr_cpg@meta.data$clone_id_shuffled <- bcr_cpg@meta.data$clone_id
+clone_det <- bcr_cpg@meta.data$clone_id_shuffled != "No_contig"
+
+bcr_cpg@meta.data[clone_det, "clone_id_shuffled"] <- sample(bcr_cpg@meta.data[clone_det, "clone_id_shuffled"], replace = F)
+
+start <- Sys.time()
+set.seed(1)
+df_shuffled <-
+  mixingCoefficient(bcr_cpg,
+                    reduction,
+                    dims,
+                    k,
+                    clones,
+                    cores = 10,
+                    rep = 3,
+                    clone_id = "clone_id_shuffled")
+end <- Sys.time()
+end - start
 ```
 
+
+```{r}
+hist(as.matrix(df_shuffled))
+```
 
 ```{r}
 hist(as.matrix(df))
