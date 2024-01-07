@@ -179,6 +179,8 @@ MixingScoreSeurat <- function(object,
 
 #' @description
 #' Old mixing score function, requires to downsample the larger clone.
+#' https://rdrr.io/github/satijalab/seurat/man/MixingMetric.html
+#' https://rdrr.io/github/satijalab/seurat/src/R/integration.R
 #' 
 mixingCoefficient <- function(object, 
                               reduction,
@@ -286,3 +288,33 @@ mixingCoefficient <- function(object,
   colnames(df_scores) <- clones
   return(df_scores)
 }
+
+#' @description
+#' Calculates intra-clonal heterogeneity metrics: mean, median and standard deviation of cell-cell distances.
+#'
+intra_clonal_distance <-
+  function(object, reduction, dims, clones, clone_id = "clone_id") {
+    intra_clone_distances <- list()
+    
+    embeddings <- Embeddings(object = object[[reduction]])[, dims]
+    
+    for (c_i in seq(length(clones))) {
+      c = clones[c_i]
+      
+      # identify which cells belong to cone
+      cells <-
+        object@meta.data %>%
+        filter(!!as.name(clone_id) %in% c) %>%
+        rownames_to_column("cell") %>%
+        pull(cell)
+      
+      # calculate distance matrix between cells in a clone
+      dist_matrix <- dist(embeddings[cells, ])
+      # calculate mean, median and sd of distances
+      intra_clone_distances[[as.character(c)]] <-
+        c(mean(dist_matrix), median(dist_matrix), sd(dist_matrix))
+    }
+    
+    # returns a names list
+    return(intra_clone_distances)
+  }
