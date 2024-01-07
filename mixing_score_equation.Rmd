@@ -1,0 +1,64 @@
+---
+title: "Mixing score equation"
+output: html_document
+---
+
+
+$$
+\begin{split} \text{mixing score}  & =  
+
+1 - \frac{\bar{x} - \frac{K}{2}}{K - \frac{K}{2}}
+\\
+
+&= 
+
+1 - 
+\frac{
+  \frac{
+    \frac{\sum_i{
+      \sum_k{
+        \begin{cases}
+          1 & \text{ if } n_{k}(x_i) \in x\\ 
+          0 & \text{ if } n_{k}(x_i) \in y
+        \end{cases}
+      }
+    }}{i}
+    +
+    \frac{\sum_j{
+      \sum_k{
+        \begin{cases}
+          1 & \text{ if } n_{k}(y_j) \in y\\ 
+          0 & \text{ if } n_{k}(y_j) \in x
+        \end{cases}
+      }
+    }}{j}
+  }{2}
+  - \frac{K}{2}
+}{\frac{K}{2}}
+
+\\
+&= 
+
+2 -
+2 (
+  \frac{\sum_i{
+    \frac{\sum_{k_x}{
+      \begin{cases}
+        1 & \text{ if } n_{k_x}(x_i) \in x\\ 
+        0 & \text{ if } n_{k_x}(x_i) \in y
+      \end{cases}
+    }}{2K_x}
+  }}{i}
+  +
+  \frac{\sum_j{
+    \frac{\sum_{k_y}{
+      \begin{cases}
+        1 & \text{ if } n_{k_y}(y_j) \in y\\ 
+        0 & \text{ if } n_{k_y}(y_j) \in x
+      \end{cases}
+    }}{2{K_y}}
+  }}{j}
+)
+
+\end{split}
+$$
