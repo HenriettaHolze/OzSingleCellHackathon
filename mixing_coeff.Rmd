@@ -75,30 +75,57 @@ bcr_cpg@meta.data %>%
 
 
 14s for 100 clones. 
+27s for 150 clones.
 
 The clone names must be valid R variables for the function to be fast. 
 
 ```{r}
 reduction = "pca"
 dims=seq(1, 20)
-object=bcr_cpg
-k = 0.5
+k = 0.3
 
 clones <- bcr_cpg@meta.data %>%
   filter(clone_id != "No_contig") %>%
   count(clone_id) %>%
-  # filter(n > 3) %>%
-  # slice_sample(n = 100) %>%
   arrange(desc(n)) %>%
-  head(150) %>%
+  filter(n >= 8) %>%
   pull(clone_id)
 
+# start <- Sys.time()
+# set.seed(1)
+# df_mc <- mixingCoefficient(object, reduction, dims, k, clones, cores=5, rep=3, clone_id = "clone_id")
+# end <- Sys.time()
+# end - start
+```
+
+```{r}
 start <- Sys.time()
 set.seed(1)
-df <- mixingCoefficient(object, reduction, dims, k, clones, cores=10, rep=3, clone_id = "clone_id")
+df_ms <-
+  MixingScoreSeurat(
+    object = bcr_cpg,
+    clones = clones,
+    clone_id = "clone_id",
+    reduction = reduction,
+    dims = dims,
+    k = k,
+    cores = 5
+  )
 end <- Sys.time()
 end - start
 ```
+
+
+```{r}
+# diff_methods <- abs(df_mc[rownames(df_ms), colnames(df_ms)] - df_ms)
+# which(diff_methods == max(diff_methods, na.rm = T))
+```
+
+```{r}
+# hist(as.matrix(df_mc), breaks = 50)
+hist(as.matrix(df_ms), breaks = 50)
+```
+
 
 Random background of mixing score
 
@@ -110,29 +137,40 @@ bcr_cpg@meta.data[clone_det, "clone_id_shuffled"] <- sample(bcr_cpg@meta.data[cl
 
 start <- Sys.time()
 set.seed(1)
-df_shuffled <-
-  mixingCoefficient(bcr_cpg,
-                    reduction,
-                    dims,
-                    k,
-                    clones,
-                    cores = 10,
-                    rep = 3,
-                    clone_id = "clone_id_shuffled")
+# df_shuffled_mc <-
+#   mixingCoefficient(bcr_cpg,
+#                     reduction,
+#                     dims,
+#                     k,
+#                     clones,
+#                     cores = 5,
+#                     rep = 3,
+#                     clone_id = "clone_id_shuffled")
+
+df_shuffled_ms <-
+  MixingScoreSeurat(
+    object = bcr_cpg,
+    clones = clones,
+    clone_id = "clone_id_shuffled",
+    reduction = reduction,
+    dims = dims,
+    k = k,
+    cores = 5
+  )
+
 end <- Sys.time()
 end - start
 ```
 
 
 ```{r}
-hist(as.matrix(df_shuffled))
+# hist(as.matrix(df_shuffled_mc))
+hist(as.matrix(df_shuffled_ms))
 ```
 
-```{r}
-hist(as.matrix(df))
-```
+Calculate intra-clonal heterogeneity score.
 
-Calculate intra-clonal heterogeneity score. 
+Score for intra-clonal heterogeneity: mean, median and standard deviation of distance between cells in a clone.
 
 ```{r}
 reduction = "pca"
@@ -143,12 +181,12 @@ clones <- bcr_cpg@meta.data %>%
   filter(clone_id != "No_contig") %>%
   count(clone_id) %>%
   arrange(desc(n)) %>%
-  head(1000) %>%
+  filter(n >= 8) %>%
   pull(clone_id)
 ```
 
 ```{r}
-intra_clone_distances <- intra_clonal_distance(object, reduction, dims, clones)
+intra_clone_distances <- intra_clonal_distance(bcr_cpg, reduction, dims, clones)
 ```
 
 Check correlation of intra-clonal heterogeneity with clone size.
@@ -171,23 +209,13 @@ rownames(intra_clone_distances_df) <-
 intra_clone_distances_df$Row.names <- NULL
 ```
 
-```{r}
-GGally::ggpairs(
-  intra_clone_distances_df,
-  aes(alpha = 0.2),
-  lower = list(
-    combo = GGally::wrap("dot", alpha = 0.4, size = 0.5),
-    continuous = GGally::wrap("smooth", alpha = 0.3, size = 0.5)
-  ),
-  progress = F
-)
-```
+
 
 Find most and least homogeneous clone.
 
 ```{r}
-which(mean_intra_clone_distances == max(mean_intra_clone_distances))
-which(mean_intra_clone_distances == min(mean_intra_clone_distances))
+# which(mean_intra_clone_distances == max(mean_intra_clone_distances))
+# which(mean_intra_clone_distances == min(mean_intra_clone_distances))
 ```
 
 
@@ -198,35 +226,29 @@ which(mean_intra_clone_distances == min(mean_intra_clone_distances))
 
 
 ```{r}
-h <- heatmap(as.matrix(df), symm = T, cexRow = 0.4, cexCol = 0.4, keep.dendro=TRUE)
+h <- heatmap(as.matrix(df_ms), symm = T, cexRow = 0.4, cexCol = 0.4, keep.dendro=TRUE)
 ```
 
 ```{r}
 row.clusters = as.hclust(h$Rowv)
-cluster_anno <- cutree(row.clusters, k=4)  # break into k=3 clusters
+cluster_anno <- cutree(row.clusters, k=5)  # break into k=3 clusters
 ```
 
 
 ```{r}
-df %>%
-  rownames_to_column() %>%
-  pivot_longer(cols = -rowname) %>%
-  filter(value != 1) %>%
-  arrange(desc(value)) %>%
-  head()
-```
-
-
-
-```{r}
-count(bcr_cpg@meta.data, clone_id)
+# df %>%
+#   rownames_to_column() %>%
+#   pivot_longer(cols = -rowname) %>%
+#   filter(value != 1) %>%
+#   arrange(desc(value)) %>%
+#   head()
 ```
 
 
 Combine intra-clonal heterogeneity with inter-clonal mixing score. 
 
 ```{r}
-df_homogeneity_similarity <- df %>%
+df_homogeneity_similarity <- df_ms %>%
   rownames_to_column(var = "clone1") %>%
   pivot_longer(cols = -clone1,
                names_to = "clone2",
@@ -273,7 +295,8 @@ Get mean PC space for top50 clones
 
 ```{r}
 cells_df <-
-  object@meta.data %>% filter(clone_id %in% clones) %>% select(clone_id, cell_id)
+  object@meta.data %>% filter(clone_id %in% clones) %>% select(clone_id)
+cells_df$cell_id <- rownames(cells_df)
 
 embeddings <- Embeddings(object = object[[reduction]])[, dims]
 
@@ -320,12 +343,83 @@ df_homogeneity_similarity <- df_homogeneity_similarity %>%
   mutate(mean_size = (size_clone1 + size_clone2) / 2)
 ```
 
+
+## kmeans on PC centroids
+
 ```{r}
-df_homogeneity_similarity
+cells_df <- object@meta.data %>% filter(clone_id %in% clones) %>% select(clone_id)
+cells_df$cell_id <- rownames(cells_df)
+
+embeddings <- Embeddings(object = object[[reduction]])[, dims]
+
+clone_pc_means <- as.data.frame(embeddings) %>%
+  rownames_to_column(var = "cell_id") %>%
+  merge(cells_df, by="cell_id") %>%
+  group_by(clone_id) %>%
+  summarise(across(where(is.numeric), mean)) %>%
+  as.data.frame()
+
+rownames(clone_pc_means) <- clone_pc_means$clone_id
+clone_pc_means$clone_id <- NULL
 ```
 
 
+```{r}
+clone_pc_means_kmeans <- t(clone_pc_means)
+colnames(clone_pc_means_kmeans) <- rownames(clone_pc_means)
 
+set.seed(21)
+clone_pc_means_kmeans <- kmeans(x = clone_pc_means, centers = 5)
+```
+
+Add clusters to seurat metadata.
+
+```{r}
+pc_means_kmeans <- bcr_cpg@meta.data %>%
+  merge(clone_pc_means_kmeans$cluster, by.x = "clone_id", by.y = "row.names", all.x=T) %>%
+  rename("pc_means_kmeans" = y) %>%
+  select(cell_id, pc_means_kmeans)
+
+rownames(pc_means_kmeans) <- pc_means_kmeans$cell_id
+
+# bcr_cpg$pc_means_kmeans <- NULL
+bcr_cpg <- AddMetaData(bcr_cpg, pc_means_kmeans)
+
+bcr_cpg@meta.data$mixing_score_kmeans <- NULL
+mixing_score_kmeans <- bcr_cpg@meta.data %>%
+  merge(cluster_anno, by.x = "clone_id", by.y = "row.names", all.x=T) %>%
+  rename("mixing_score_kmeans" = y) %>%
+  select(cell_id, mixing_score_kmeans)
+
+rownames(mixing_score_kmeans) <- mixing_score_kmeans$cell_id
+
+bcr_cpg <- AddMetaData(bcr_cpg, mixing_score_kmeans)
+```
+
+How to clusters from mean distance and mixing score overlap?
+
+```{r}
+bcr_cpg@meta.data %>%
+  select(clone_id, pc_means_kmeans, mixing_score_kmeans) %>%
+  unique() %>%
+  select(pc_means_kmeans, mixing_score_kmeans) %>%
+  table()
+```
+
+
+===========
+
+```{r}
+GGally::ggpairs(
+  intra_clone_distances_df,
+  aes(alpha = 0.2),
+  lower = list(
+    combo = GGally::wrap("dot", alpha = 0.4, size = 0.5),
+    continuous = GGally::wrap("smooth", alpha = 0.3, size = 0.5)
+  ),
+  progress = F
+)
+```
 
 ```{r fig.height=8}
 GGally::ggpairs(
@@ -333,12 +427,13 @@ GGally::ggpairs(
   progress = F,
   lower = list(
     # continuous = GGally::wrap("points", alpha = 0.3, size = 0.1),
-    combo = GGally::wrap("dot", alpha = 0.4, size = 0.2),
-    continuous = GGally::wrap("smooth", alpha = 0.3, size = 0.1)
-  )
+    # combo = GGally::wrap("dot", alpha = 0.4, size = 0.2),
+    continuous = GGally::wrap("smooth", alpha = 0.05, size = 0.1)
+  ),
+  upper = list(continuous = GGally::wrap("cor", method = "pearson"))
 ) +
   theme_bw()
-ggsave("results/pairs_plot_top100.pdf")
+# ggsave("results/pairs_plot_top150.pdf")
 ```
 
 
@@ -347,14 +442,14 @@ GGally::ggpairs(
   df_homogeneity_similarity[c(3, 12, 14, 17)],
   progress = F,
   lower = list(
-    # continuous = GGally::wrap("points", alpha = 0.3, size = 0.1),
-    combo = GGally::wrap("dot", alpha = 0.4, size = 0.2),
-    continuous = GGally::wrap("smooth", alpha = 0.3, size = 0.1)
+    # continuous = GGally::wrap("points", alpha = 0.1, size = 0.2),
+    # combo = GGally::wrap("dot", alpha = 1, size = 0.2),
+    continuous = GGally::wrap("smooth", alpha = 0.05, size = 0.1)
   ),
-  upper = list(method = "spearman")
+  upper = list(continuous = GGally::wrap("cor", method = "pearson"))
 ) +
   theme_bw()
-ggsave("results/pairs_plot_top100.pdf")
+# ggsave("results/pairs_plot_top150.pdf")
 ```
 
 
@@ -458,6 +553,7 @@ DimPlot(
 ```{r}
 distant_clones <- df_homogeneity_similarity %>%
   arrange(mixing_coefficient) %>%
+  filter(mean_median < 10) %>%
   head(1) %>%
   tail(1) %>%
   select(clone1, clone2) %>%
@@ -469,7 +565,7 @@ names(distant_clones_highlight) <- distant_clones
 
 DimPlot(
   bcr_cpg,
-  reduction = "UMAP",
+  reduction = "umap",
   cells.highlight = distant_clones_highlight,
   cols.highlight = c("blue", "red", "green", "yellow", "orange")
 ) + coord_fixed(ratio = 1)
@@ -478,6 +574,7 @@ DimPlot(
 ```{r}
 close_clones <- df_homogeneity_similarity %>%
   arrange(desc(mixing_coefficient)) %>%
+  filter(mean_median < 10) %>%
   head(1) %>%
   tail(1) %>%
   select(clone1, clone2) %>%
@@ -489,7 +586,7 @@ names(close_clones_highlight) <- close_clones
 
 DimPlot(
   bcr_cpg,
-  reduction = "UMAP",
+  reduction = "umap",
   cells.highlight = close_clones_highlight,
   cols.highlight = c("blue", "red", "green", "yellow", "orange")
 ) + coord_fixed(ratio = 1)
@@ -537,9 +634,6 @@ DimPlot(
 ```
 
 
-
-Why do I get 1.02 for mixing score? 
-
 What is different between clones that overlap very well? 
 
 Correlation mixing coefficient and clone size and homogeneity
@@ -570,64 +664,8 @@ bcr_cpg@meta.data %>%
   facet_grid(~y, scales = "free")
 ```
 
-Get mean PC space for top50 clones
-kmeans clustering 
-
-```{r}
-cells_df <- object@meta.data %>% rownames_to_column(var = "cell_id") %>% filter(clone_id %in% clones) %>% select(clone_id, cell_id)
-
-embeddings <- Embeddings(object = object[[reduction]])[, dims]
-
-clone_pc_means <- as.data.frame(embeddings) %>%
-  rownames_to_column(var = "cell_id") %>%
-  merge(cells_df, by="cell_id") %>%
-  group_by(clone_id) %>%
-  summarise(across(where(is.numeric), mean)) %>%
-  as.data.frame()
-
-rownames(clone_pc_means) <- clone_pc_means$clone_id
-clone_pc_means$clone_id <- NULL
-```
 
 
-```{r}
-clone_pc_means_kmeans <- t(clone_pc_means)
-colnames(clone_pc_means_kmeans) <- rownames(clone_pc_means)
-
-set.seed(21)
-clone_pc_means_kmeans <- kmeans(x = clone_pc_means, centers = 4)
-```
-
-Add clusters to seurat metadata.
-
-```{r}
-pc_means_kmeans <- bcr_cpg@meta.data %>%
-  merge(clone_pc_means_kmeans$cluster, by.x = "clone_id", by.y = "row.names", all.x=T) %>%
-  rename("pc_means_kmeans" = y) %>%
-  select(cell_id, pc_means_kmeans)
-
-rownames(pc_means_kmeans) <- pc_means_kmeans$cell_id
-
-bcr_cpg <- AddMetaData(bcr_cpg, pc_means_kmeans)
-
-
-mixing_score_kmeans <- bcr_cpg@meta.data %>%
-  merge(cluster_anno, by.x = "clone_id", by.y = "row.names", all.x=T) %>%
-  rename("mixing_score_kmeans" = y) %>%
-  select(cell_id, mixing_score_kmeans)
-
-rownames(mixing_score_kmeans) <- mixing_score_kmeans$cell_id
-
-bcr_cpg <- AddMetaData(bcr_cpg, mixing_score_kmeans)
-```
-
-How to clusters from mean distance and mixing score overlap?
-
-```{r}
-bcr_cpg@meta.data %>%
-  select(pc_means_kmeans, mixing_score_kmeans) %>%
-  table()
-```
 
 Check where clusters are on UMAP
 
@@ -635,11 +673,152 @@ Check where clusters are on UMAP
 require(scales)
 
 # "#FF0000" "#80FF00" "#00FFFF" "#8000FF"
-DimPlot(bcr_cpg, reduction = "UMAP", dims = c(1, 2), group.by = "pc_means_kmeans", na.value = "00FFFFFF", cols = hue_pal()(4), shuffle = T) + coord_equal()
-DimPlot(bcr_cpg, reduction = "UMAP", dims = c(1, 2), group.by = "mixing_score_kmeans", na.value = "00FFFFFF", cols = hue_pal()(4), shuffle = T) + coord_equal()
-DimPlot(bcr_cpg, reduction = "UMAP", dims = c(1, 2), group.by = "celltype", shuffle = T) + coord_equal()
+DimPlot(
+  subset(bcr_cpg, subset = pc_means_kmeans %in% c("1", "2", "3", "4", "5")),
+  reduction = "umap",
+  dims = c(1, 2),
+  group.by = "pc_means_kmeans",
+  na.value = "00FFFFFF",
+  cols = hue_pal()(5),
+  shuffle = T
+) + coord_equal()
+DimPlot(
+  subset(bcr_cpg, subset = mixing_score_kmeans %in% c("1", "2", "3", "4", "5")),
+  reduction = "umap",
+  dims = c(1, 2),
+  group.by = "mixing_score_kmeans",
+  na.value = "00FFFFFF",
+  cols = hue_pal()(5),
+  shuffle = T
+) + coord_equal()
+DimPlot(
+  bcr_cpg,
+  reduction = "umap",
+  dims = c(1, 2),
+  group.by = "celltype",
+  shuffle = T
+) + coord_equal()
 ```
 
+<!-- DEG clusters by kmeans or mixing score -->
+
+
+<!-- ```{r} -->
+<!-- bcr_cpg@meta.data -->
+
+<!-- Idents(bcr_cpg) <- "mixing_score_kmeans" -->
+<!-- mixing_score_kmeans_markers <- FindAllMarkers(bcr_cpg, assay = "originalexp", slot = "counts") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- Idents(bcr_cpg) <- "pc_means_kmeans" -->
+<!-- pc_means_kmeans_markers <- FindAllMarkers(bcr_cpg, assay = "originalexp", slot = "counts") -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- mixing_score_kmeans_markers %>% -->
+<!--   filter(p_val_adj < 0.05, pct.1 > 0.05) %>% -->
+<!--   group_by(cluster) %>% -->
+<!--   slice_max(order_by = avg_log2FC, n = 10) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- pc_means_kmeans_markers %>% -->
+<!--   filter(p_val_adj < 0.05, pct.1 > 0.05) %>% -->
+<!--   group_by(cluster) %>% -->
+<!--   slice_max(order_by = avg_log2FC, n = 10) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- mixing_score_kmeans_markers_sign <- mixing_score_kmeans_markers %>% -->
+<!--   filter(p_val_adj < 0.05) -->
+
+<!-- pc_means_kmeans_markers_sign <- pc_means_kmeans_markers %>% -->
+<!--   filter(p_val_adj < 0.05) -->
+
+<!-- mixing_score_kmeans_markers_sign[!mixing_score_kmeans_markers_sign$gene %in% pc_means_kmeans_markers_sign$gene,] %>%  -->
+<!--   group_by(cluster) %>% -->
+<!--   slice_max(order_by = avg_log2FC, n = 10) -->
+<!-- ``` -->
+
+
+#### DEG pseudo bulk
+
+Aggregate counts by clone
+
+```{r}
+seurat_object_aggr <-
+  AggregateClones(seurat_object = bcr_cpg)
+
+clone_cluster_markers_mixing_score <- CloneGroupDeg(seurat_object_aggr, cluster_anno)
+clone_cluster_markers_pc_means <- CloneGroupDeg(seurat_object_aggr, clone_pc_means_kmeans$cluster)
+```
+
+
+
+DEG with DESeq2 PC centroids
+
+```{r}
+clone_cluster_markers_pc_means %>%
+  filter(p_val_adj < 0.05) %>%
+  slice_max(order_by = avg_log2FC, n = 10, by=cluster)
+```
+```{r}
+library(EnhancedVolcano)
+```
+
+
+```{r fig.height=10}
+sapply(seq(1, 4), function(x) {
+  tmp <- filter(clone_cluster_markers_pc_means, cluster == as.character(x))
+  par(new=T)
+  plot(EnhancedVolcano(tmp,
+                  lab = tmp$gene,
+                  x = 'avg_log2FC',
+                  y = 'p_val_adj'))
+})
+```
+
+```{r}
+clone_cluster_markers_pc_means %>% filter(gene == "Vim")
+```
+
+
+DEG with DESeq2 Mixing score
+```{r}
+clone_cluster_markers_mixing_score %>%
+  filter(p_val_adj < 0.05) %>%
+  slice_max(order_by = avg_log2FC, n = 10, by=cluster)
+```
+
+```{r fig.height=10}
+sapply(seq(1, 4), function(x) {
+  tmp <- filter(clone_cluster_markers_mixing_score, cluster == as.character(x))
+  par(new=T)
+  plot(EnhancedVolcano(tmp,
+                  lab = tmp$gene,
+                  x = 'avg_log2FC',
+                  y = 'p_val_adj'))
+})
+```
+
+```{r}
+unique(pull(filter(clone_cluster_markers_mixing_score, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene)[pull(filter(clone_cluster_markers_mixing_score, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene) %in% pull(filter(clone_cluster_markers_pc_means, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene)])
+cat("\n")
+genes_only_ms <- unique(pull(filter(clone_cluster_markers_mixing_score, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene)[!pull(filter(clone_cluster_markers_mixing_score, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene) %in% pull(filter(clone_cluster_markers_pc_means, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene)])
+genes_only_ms
+cat("\n")
+genes_only_centoids <- unique(pull(filter(clone_cluster_markers_pc_means, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene)[!pull(filter(clone_cluster_markers_pc_means, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene) %in% pull(filter(clone_cluster_markers_mixing_score, p_val_adj < 0.05, abs(avg_log2FC) > 1.5), gene)])
+genes_only_centoids
+```
+
+
+```{r}
+clone_cluster_markers_mixing_score %>% filter(gene %in% genes_only_centoids) %>% mutate(p_val_adj = round(p_val_adj, 3)) %>% arrange(gene)
+clone_cluster_markers_pc_means %>% filter(gene %in% genes_only_ms) %>% mutate(p_val_adj = round(p_val_adj, 3)) %>% arrange(gene)
+```
 
 
 <!-- ```{r} -->
