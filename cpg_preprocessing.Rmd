@@ -1,0 +1,107 @@
+---
+title: "R Notebook"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(Seurat)
+```
+
+```{r}
+getwd()
+bcr <- readRDS("./data/zenodo_download/seurat_bcr.rds")
+```
+
+Plot number of barcodes per cell
+
+Plot size of clones
+
+clone_id "No_contig"
+
+```{r}
+table(bcr@meta.data$orig.ident)
+table(bcr@meta.data$filter_rna)
+```
+
+
+```{r fig.width=7, fig.height=4}
+bcr@meta.data %>%
+  filter(filter_rna == "False") %>%
+  group_by(orig.ident) %>%
+  filter(clone_id != "No_contig") %>%
+  count(clone_id) %>%
+  ggplot(aes(x=n, fill=orig.ident)) +
+  geom_bar() +
+  facet_wrap(~orig.ident) +
+  theme_bw()
+```
+
+```{r}
+head(bcr@meta.data)
+```
+
+
+```{r}
+bcr@meta.data %>%
+  # filter(filter_rna == "False") %>%
+  filter(clone_id != "No_contig") %>%
+  mutate(n_barcodes = str_count(clone_id, pattern = "\\|") + 1) %>%
+  ggplot(aes(n_barcodes, total_counts)) +
+  geom_point(alpha=0.02)
+```
+
+```{r}
+bcr@meta.data %>%
+  mutate(n_barcodes = ifelse(clone_id == "No_contig", 0, str_count(clone_id, pattern = "\\|") + 1)) %>%
+  group_by(orig.ident) %>%
+  count(n_barcodes) %>%
+  ggplot(aes(x=n_barcodes, y=n)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~orig.ident)
+```
+
+Subset CpG dataset and preprocess.
+
+```{r}
+highquality <- subset(bcr, subset = filter_rna %in% c("False"))
+cpg <- subset(highquality, subset = Treatment %in% c("CpG"))
+cpg@reductions$PCA <- NULL
+cpg@reductions$UMAP <- NULL
+```
+
+Exact same preprocessing as Cathy. 
+
+```{r}
+cpg <- NormalizeData(cpg)
+
+ig_genes <- rownames(cpg)[grepl(pattern = "^Ig[klh]", rownames(cpg))]
+length(ig_genes)
+
+cpg <- FindVariableFeatures(cpg, nfeatures = 2500) #?why 2258
+
+VariableFeatures(cpg) <- VariableFeatures(cpg)[!VariableFeatures(cpg) %in% ig_genes]
+cpg <- ScaleData(cpg)
+
+cpg <- RunPCA(cpg, features = VariableFeatures(object = cpg))
+cpg <- RunUMAP(cpg, dims = 1:20)
+```
+
+```{r}
+DimPlot(cpg, reduction = "pca", group.by = "celltype")
+DimPlot(cpg, reduction = "umap", group.by = "celltype")
+```
+
+```{r}
+cpg$clone_id_pipe <- cpg$clone_id
+cpg$clone_id <- str_replace_all(cpg$clone_id_pipe, pattern = "\\|", ".")
+```
+
+```{r}
+cpg@meta.data$cell_id <- rownames(cpg@meta.data)
+```
+
+
+```{r}
+saveRDS(cpg, "data/cpg_processed.rds")
+```
