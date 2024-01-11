@@ -198,20 +198,19 @@ mixingCoefficient <- function(object,
   
   # dataframe of cell IDs and clone IDs
   cells_df <- object@meta.data %>%
-    select(-cell_id) %>%
-    rownames_to_column(var = "cell_id") %>%
+    rownames_to_column(var = "cell_id_rowname") %>%
     filter(!!as.name(clone_id) %in% clones) %>%
-    select(!!as.name(clone_id), cell_id)
+    select(!!as.name(clone_id), cell_id_rowname)
   
   # subset embedding to cells from selected clones
-  embeddings <- embeddings[cells_df$cell_id, ]
+  embeddings <- embeddings[cells_df$cell_id_rowname, ]
   
   # calculate distance matrix between all cells of all selected clones
   dist_matrix <- dist(embeddings)
   dist_matrix <- as.matrix(dist_matrix)
   
   # create clone to cell_ids dict
-  clone_to_cell_dics <- split(cells_df$cell_id, cells_df[[clone_id]])
+  clone_to_cell_dics <- split(cells_df$cell_id_rowname, cells_df[[clone_id]])
   
   # prepare empty results dataframe
   df_scores <-
@@ -232,7 +231,7 @@ mixingCoefficient <- function(object,
   
   # cells_vector
   cells_vector <- cells_df$clone_id
-  names(cells_vector) <- cells_df$cell_id
+  names(cells_vector) <- cells_df$cell_id_rowname
   
   # iterate over all clone pairs
   mixing_scores <-
@@ -296,7 +295,7 @@ intra_clonal_distance <-
   function(object, reduction, dims, clones, clone_id = "clone_id") {
     intra_clone_distances <- list()
     
-    embeddings <- Embeddings(object = object[[reduction]])[, dims]
+    embeddings <- Seurat::Embeddings(object = object[[reduction]])[, dims]
     
     for (c_i in seq(length(clones))) {
       c = clones[c_i]
