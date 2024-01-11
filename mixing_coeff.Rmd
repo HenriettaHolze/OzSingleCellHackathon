@@ -8,86 +8,8 @@ library(tidyverse)
 library(Seurat)
 library(parallel)
 library(RANN)
+source("mixing_score_functions.R")
 ```
-
-
-```{r}
-getwd()
-bcr <- readRDS("./data/zenodo_download/seurat_bcr.rds")
-
-bcr
-```
-
-
-Plot number of barcodes per cell
-
-Plot size of clones
-
-clone_id "No_contig"
-
-```{r}
-table(bcr@meta.data$orig.ident)
-
-table(bcr@meta.data$filter_rna)
-```
-
-
-```{r fig.width=7, fig.height=4}
-bcr@meta.data %>%
-  filter(filter_rna == "False") %>%
-  group_by(orig.ident) %>%
-  filter(clone_id != "No_contig") %>%
-  count(clone_id) %>%
-  ggplot(aes(x=n, fill=orig.ident)) +
-  geom_bar() +
-  facet_wrap(~orig.ident) +
-  theme_bw()
-```
-
-```{r}
-head(bcr@meta.data)
-```
-
-
-```{r}
-bcr@meta.data %>%
-  # filter(filter_rna == "False") %>%
-  filter(clone_id != "No_contig") %>%
-  mutate(n_barcodes = str_count(clone_id, pattern = "\\|") + 1) %>%
-  ggplot(aes(n_barcodes, total_counts)) +
-  geom_point(alpha=0.02)
-```
-
-```{r}
-bcr@meta.data %>%
-  mutate(n_barcodes = ifelse(clone_id == "No_contig", 0, str_count(clone_id, pattern = "\\|") + 1)) %>%
-  group_by(orig.ident) %>%
-  count(n_barcodes) %>%
-  ggplot(aes(x=n_barcodes, y=n)) +
-  geom_bar(stat="identity") +
-  facet_wrap(~orig.ident)
-```
-
-
-# Mixing coefficient
-
-
-Pseudo code
-
-Create 50 PC space
-
-For each clone c
-
-    For each clone b that is not clone c
-    
-      For each repetition r
-      
-        subsample smaller clone
-        
-        for each cell in clone c
-          select k nearest neighbours n
-          mixing = sum(clone_id[n] == c) / k
-        
             
 
 ```{r}
@@ -95,18 +17,9 @@ bcr_cpg <- readRDS("data/cpg_processed.rds")
 ```
 
 ```{r}
-bcr_cpg$clone_id_pipe <- bcr_cpg$clone_id
-bcr_cpg$clone_id <- str_replace_all(bcr_cpg$clone_id, pattern = "\\|", ".")
+DimPlot(bcr_cpg, reduction = "umap", group.by = "celltype") + coord_fixed(ratio = 1)
 ```
 
-```{r}
-bcr_cpg@meta.data$cell_id <- rownames(bcr_cpg@meta.data)
-```
-
-```{r}
-DimPlot(bcr_cpg, reduction = "UMAP", group.by = "originalexp_snn_res.0.2") + coord_fixed(ratio = 1)
-DimPlot(bcr_cpg, reduction = "UMAP", group.by = "celltype") + coord_fixed(ratio = 1)
-```
 
 
 16% cells have no clone assigned.  
@@ -115,178 +28,51 @@ DimPlot(bcr_cpg, reduction = "UMAP", group.by = "celltype") + coord_fixed(ratio 
 sum(bcr_cpg@meta.data$clone_id == "No_contig") / ncol(bcr_cpg)
 ```
 
-```{r}
-bcr_cpg@meta.data %>%
-  count(clone_id) %>%
-  arrange(desc(n))
-```
-
-```{r}
-c = "B_60_9_2_170_2_1"
-b = "B_126_7_4_307_2_11"
-```
+<!-- ```{r} -->
+<!-- c = "B_60_9_2_170_2_1" -->
+<!-- b = "B_126_7_4_307_2_11" -->
+<!-- ``` -->
 
 
 
-```{r}
-c = "B_345_7_1_167_2_1"
-b = "B_184_5_7_167_2_1"
-b = "B_72_4_9_204_3_1"
-DimPlot(bcr_cpg, reduction = "umap", cells.highlight = list("B_345_7_1_167_2_1" = rownames(bcr_cpg@meta.data[bcr_cpg@meta.data$clone_id == c,]), "B_72_4_9_204_3_1" = rownames(bcr_cpg@meta.data[bcr_cpg@meta.data$clone_id == b,])), cols.highlight = c("blue", "red")) + coord_fixed(ratio = 1)
-```
+<!-- ```{r} -->
+<!-- c = "B_345_7_1_167_2_1" -->
+<!-- b = "B_184_5_7_167_2_1" -->
+<!-- b = "B_72_4_9_204_3_1" -->
+<!-- DimPlot(bcr_cpg, reduction = "UMAP", cells.highlight = list("B_345_7_1_167_2_1" = rownames(bcr_cpg@meta.data[bcr_cpg@meta.data$clone_id == c,]), "B_72_4_9_204_3_1" = rownames(bcr_cpg@meta.data[bcr_cpg@meta.data$clone_id == b,])), cols.highlight = c("blue", "red")) + coord_fixed(ratio = 1) -->
+<!-- ``` -->
 
 
-```{r}
-DimPlot(bcr_cpg, reduction = "umap", group.by = "celltype") + coord_fixed(ratio = 1)
-# 2 transcription factors for plasma cells
-FeaturePlot(bcr_cpg, reduction = "umap", features = c("Xbp1", "Sdc1"))
-```
+<!-- ```{r} -->
+<!-- DimPlot(bcr_cpg, reduction = "umap", group.by = "celltype") + coord_fixed(ratio = 1) -->
+<!-- # 2 transcription factors for plasma cells -->
+<!-- FeaturePlot(bcr_cpg, reduction = "umap", features = c("Xbp1", "Sdc1")) -->
+<!-- ``` -->
 
 
-Optimizing
-- calculate distances in neighbourhood graph for all cells that have a barcode, 20 nearest neighbours from pre-calculated neighbourhood graph
-https://rdrr.io/github/satijalab/seurat/man/MixingMetric.html
-https://rdrr.io/github/satijalab/seurat/src/R/integration.R
-
-```{r}
-mixingCoefficient <- function(object, 
-                              reduction,
-                              dims,
-                              k,
-                              clones,
-                              cores = 1,
-                              max_cells = 50,
-                              rep = 1,
-                              clone_id = "clone_id") {
-    clones <- as.character(clones)
-    
-    # get embedding with specified dimensions from Seurat object
-    embeddings <- Embeddings(object = object[[reduction]])[, dims]
-    
-    # dataframe of cell IDs and clone IDs
-    cells_df <- object@meta.data %>%
-      select(-cell_id) %>%
-      rownames_to_column(var = "cell_id") %>%
-      filter(!!as.name(clone_id) %in% clones) %>%
-      select(!!as.name(clone_id), cell_id)
-    
-    # subset embedding to cells from selected clones
-    embeddings <- embeddings[cells_df$cell_id, ]
-    
-    # calculate distance matrix between all cells of all selected clones
-    dist_matrix <- dist(embeddings)
-    dist_matrix <- as.matrix(dist_matrix)
-    
-    # create clone to cell_ids dict
-    clone_to_cell_dics <- split(cells_df$cell_id, cells_df[[clone_id]])
-    
-    # prepare empty results dataframe
-    df_scores <-
-      data.frame(matrix(nrow = length(clones), ncol = length(clones)))
-    
-    clone_index_pairs <-
-      as.list(as.data.frame(t(
-        gtools::permutations(
-          n = length(clones),
-          r = 2,
-          repeats.allowed = F
-        )
-      )))
-    
-    clone_index_pairs <-
-      clone_index_pairs[sapply(clone_index_pairs, function(x)
-        x[1] < x[2])]
-    
-    # cells_vector
-    cells_vector <- cells_df$clone_id
-    names(cells_vector) <- cells_df$cell_id
-    
-    # iterate over all clone pairs
-    mixing_scores <-
-      mclapply(clone_index_pairs, mc.cores = cores, function(clone_pair) {
-        c = clones[clone_pair[1]]
-        b = clones[clone_pair[2]]
-        
-        cells1 <- as.vector(unlist(clone_to_cell_dics[c]))
-        cells2 <- as.vector(unlist(clone_to_cell_dics[b]))
-        
-        # iterate over sampling repetitions
-        mixing_scores <- sapply(rep, function(r) {
-          # sample to smaller clone size
-          if (length(cells1) < length(cells2)) {
-            cells2 <- sample(cells2, size = length(cells1), replace = F)
-          } else if (length(cells1) > length(cells2)) {
-            cells1 <- sample(cells1, size = length(cells2), replace = F)
-          }
-          
-          cell_list <- c(cells1, cells2)
-          
-          dist_matrix_clones <-
-            dist_matrix[cell_list, cell_list]
-          
-          # k is half the number of cells of one clone
-          k_clone_pair <- floor(length(cell_list) * 0.5 * k)
-          col_dist <- colnames(dist_matrix_clones)
-          # calculate average identity
-          s <- sapply(cell_list, function(cell) {
-            # get nearest neighbours (2-21 to not take same cell)
-            kneigh <-
-              col_dist[order(dist_matrix_clones[cell, ])[seq(2, k_clone_pair + 1)]]
-            sum(cells_vector[kneigh] == cells_vector[cell])
-          })
-          
-          # calculate mixing score as in
-          mixing_score <-
-            1 - (sum(s) / length(cell_list) - k_clone_pair / 2) / (k_clone_pair - k_clone_pair / 2)
-          return(mixing_score)
-        })
-        
-        return(mean(mixing_scores))
-      })
-    
-    for (i in seq(1, length(clone_index_pairs))) {
-      df_scores[clone_index_pairs[[i]][1], clone_index_pairs[[i]][2]] <-
-        mixing_scores[[i]]
-      df_scores[clone_index_pairs[[i]][2], clone_index_pairs[[i]][1]] <-
-        mixing_scores[[i]]
-    }
-    
-    rownames(df_scores) <- clones
-    colnames(df_scores) <- clones
-    return(df_scores)
-  }
-```
-
-Score for intra-clonal heterogeneity: mean, median and standard deviation of distance between cells in a clone.
-
-```{r}
-intra_clonal_distance <- function(object, reduction, dims, clones, clone_id = "clone_id") {
-  intra_clone_distances <- list()
-  
-  embeddings <- Embeddings(object = object[[reduction]])[, dims]
-  
-  for (c_i in seq(length(clones))) {
-    c = clones[c_i]
-    
-    # identify which cells belong to cone
-    cells <-
-      object@meta.data %>%
-      filter(!!as.name(clone_id) %in% c) %>%
-      rownames_to_column("cell") %>%
-      pull(cell)
-    
-    # calculate distance matrix between cells in a clone
-    dist_matrix <- dist(embeddings[cells,])
-    # calculate mean, median and sd of distances
-    intra_clone_distances[[as.character(c)]] <- c(mean(dist_matrix), median(dist_matrix), sd(dist_matrix))
-  }
-  
-  # returns a names list
-  return(intra_clone_distances)
-}
-```
 
 Calculate inter-clonal mixing score. 
+
+Cummulative sum of clones given clone size threshold. 
+
+```{r}
+bcr_cpg@meta.data %>%
+  filter(clone_id != "No_contig") %>%
+  count(clone_id) %>%
+  group_by(n) %>%
+  count(n) %>%
+  # clones smaller than 3 don't make sense anyways
+  filter(n >= 3) %>%
+  ungroup() %>%
+  arrange(desc(n)) %>%
+  mutate(cumsum = cumsum(nn)) %>%
+  ggplot(aes(x=n, y=cumsum)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label=cumsum), position=position_dodge(width=0.9), vjust=-0.25) +
+  theme_bw()
+  
+```
+
 
 14s for 100 clones. 
 
