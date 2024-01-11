@@ -1,0 +1,220 @@
+---
+title: "Klein data"
+output: html_document
+---
+
+In vitro data from Weinreb et al. 2020 is available via the cospar python package. 
+
+Raw data is available via GEO https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM4185642 . 
+
+- what clones were selected
+- what was embedding built on (all cells or only those 500 clones?)
+- expression data is floats, i.e. already normalized
+
+```{python3 eval=FALSE}
+conda create -n ozsc_hackathon -c bioconda scanpy cospar ipython
+```
+
+Import 
+```{python3 eval=FALSE}
+import cospar as cs
+adata = cs.datasets.hematopoiesis_subsampled(data_des='LARRY')
+adata_orig = cs.datasets.hematopoiesis()
+```
+
+Clone IDs are binary matrix for 500 clones
+
+```{python3 eval=FALSE}
+adata.obsm["X_clone"].shape
+# create column in obs for clone IDs
+adata.obs["clone"] = np.array(adata.obsm["X_clone"].todense().argmax(axis=1).flatten())[0]
+```
+
+PCA (40 PCs) and UMAP embedding
+
+```{python3 eval=FALSE}
+adata.obsm["X_pca"].shape
+adata.obsm["X_emb"].shape
+```
+
+```{python3 eval=FALSE}
+cs.pl.embedding(adata_orig, color="state_info")
+cs.pl.embedding(adata, color="state_info")
+```
+
+
+### GEO data
+
+stateFate_inVitro_normed_counts.mtx.gz
+This matrix reports the number of transcripts (UMIs) for each gene in each cell, after total-counts normalization (i.e. L1 normalization on cells). Rows represent cells and columns represent genes. There are no column or row labels. Gene names and cell metadata are provided in separate files.
+
+stateFate_inVitro_gene_names.txt.gz
+List of gene symbols (one per line). The rows of this file correspond to the columns of counts_matrix_in_vitro (above).
+
+stateFate_inVitro_clone_matrix.mtx.gz
+Binary matrix indicating the clonal membership of each cell. The rows of this file represent cells and correspond to the rows of counts_matrix_in_vitro (above). The columns represent clones. Not every cell belongs to a clone.
+
+stateFate_inVitro_metadata.txt.gz
+Table of cell metadata. There is a header row followed by one row for each cell. The rows of this file (after the header) correspond to the rows of counts_matrix_in_vitro (above). The headers are:
+
+    "Library": The sequencing library that the cell belongs to
+    "Cell barcode": Cell barcode used for demultiplexing transcripts in inDrops
+    "Time point": The time point (in days) that the cells were profiled
+    "Starting population": Either Lin-Kit+Sca1+ (LSK) for Lin-Kit+ (LK)
+    "Cell type annotation": Either "undiff" or one of ten mature cell types that appeared in culture
+    "Well": To evaluate the missing heritability of fate bias, we cultured cells in two different sets of wells after day 2. For all cells from day 2, this column will have a label of "0". For later time points, the label is either "1" or "2", corresponding to the two sets of wells.
+    "SPRING-x/y": Coordinates for plotting cells in SPRING
+
+```{r}
+library(tidyverse)
+library(Seurat)
+```
+
+
+```{r}
+clone_mat <- Matrix::readMM('klein_lab_data/stateFate_inVitro_GSM4185642/GSM4185642_stateFate_inVitro_clone_matrix.mtx')
+norm_count_mat <- Matrix::readMM('klein_lab_data/stateFate_inVitro_GSM4185642/GSM4185642_stateFate_inVitro_normed_counts.mtx.gz')
+cell_barcodes <- read.table('klein_lab_data/stateFate_inVitro_GSM4185642/GSM4185642_stateFate_inVitro_cell_barcodes.txt')
+gene_names <- read.table('klein_lab_data/stateFate_inVitro_GSM4185642/GSM4185642_stateFate_inVitro_gene_names.txt')
+metadata <- read_tsv('klein_lab_data/stateFate_inVitro_GSM4185642/GSM4185642_stateFate_inVitro_metadata.txt')
+# library_names <- read.table('klein_lab_data/stateFate_inVitro_GSM4185642/GSM4185642_stateFate_inVitro_library_names.txt')
+```
+
+```{r}
+dim(norm_count_mat)
+dim(cell_barcodes)
+```
+
+Cells as rows and features as columns.
+
+
+```{r}
+rownames(norm_count_mat) <- paste(metadata$Library, metadata$`Cell barcode`, sep = "-")
+colnames(norm_count_mat) <- gene_names$V1
+
+rownames(metadata) <- paste(metadata$Library, metadata$`Cell barcode`, sep = "-")
+```
+
+```{r}
+dim(norm_count_mat)
+dim(clone_mat)
+```
+
+Count matrix contains floats not integers and rows (cells) do not sum to an even number. Counts must be log normalized.
+
+```{r}
+norm_count_mat[1,][norm_count_mat[1,] != 0][1:10]
+sum(norm_count_mat[1,])
+```
+
+
+```{r}
+hist(log(as.matrix(norm_count_mat[1,][norm_count_mat[1,] != 0])))
+hist(log(as.matrix(norm_count_mat[1,]) + 1))
+```
+
+Cells are normalized to 2878.749.
+
+```{r}
+hist(rowSums(norm_count_mat))
+
+rowSums(norm_count_mat)[1:20]
+```
+
+
+```{r}
+# max 1 barcode per cell
+max(rowSums(as.matrix(clone_mat)))
+```
+
+
+```{r}
+# number of cells per clone
+hist(colSums(as.matrix(clone_mat)))
+```
+
+Add a column for no clone detected (id 5865).
+
+```{r}
+dim(clone_mat)
+clone_mat <- cbind(clone_mat, rep(0.5, nrow(clone_mat)))
+```
+
+
+```{r}
+clone_ids <- parallel::mclapply(1:nrow(clone_mat), mc.cores = 3, function(i) which(clone_mat[i,] == max(clone_mat[i,])))
+
+length(clone_ids)
+clone_ids[10]
+```
+
+```{r}
+unlist(clone_ids)
+metadata$clone_ids <- unlist(clone_ids)
+```
+
+
+```{r}
+# install.packages("MatrixExtra")
+norm_count_mat_t <- MatrixExtra::as.csc.matrix(norm_count_mat)
+norm_count_mat_t <- Matrix::t(norm_count_mat_t)
+```
+
+
+
+```{r}
+klein_seurat <- Seurat::CreateSeuratObject(counts = norm_count_mat_t, assay = "RNA", meta.data = metadata, min.cells = 0, min.features = 0)
+```
+
+```{r}
+# saveRDS(klein_seurat, "./klein_lab_data/GSM4185642_stateFate_inVitro_seurat.rds")
+```
+
+```{r}
+klein_seurat <- readRDS("./klein_lab_data/GSM4185642_stateFate_inVitro_seurat.rds")
+```
+```{r}
+klein_seurat
+table(klein_seurat$`Cell type annotation`)
+```
+
+
+```{r}
+head(rownames(klein_seurat))
+head(colnames(klein_seurat))
+head(klein_seurat@meta.data)
+```
+
+
+```{r}
+# norm_count_mat <- NULL
+```
+
+
+cospar package data has 49116 cells, matrix on GEO has 25289 cells.
+GEO has cell IDs, cospar not. 
+cospar has PCA embedding, GEO has not. 
+
+
+Could use the SPRING embedding to figure out which cells are in both datasets.
+Same number of clones
+```{r}
+dim(clone_mat)
+lapply(colnames(metadata), function(x) c(x, nrow(unique(metadata[,x]))))
+```
+
+--------------
+
+Sam Morris data
+
+```{r}
+seurat_morris <- readRDS("morris_data/lsk_rna_doub_remv2.Rds")
+```
+
+```{r}
+seurat_morris
+```
+
+
+
+
