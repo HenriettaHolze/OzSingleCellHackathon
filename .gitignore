@@ -1,0 +1,10 @@
+.Rproj.user/
+*.Rproj
+old_snippets.R
+*.Rds
+*.rds
+*.gz
+*.tar
+*.zip
+*.h5ad
+*.h5
