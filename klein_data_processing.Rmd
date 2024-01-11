@@ -203,18 +203,3 @@ dim(clone_mat)
 lapply(colnames(metadata), function(x) c(x, nrow(unique(metadata[,x]))))
 ```
 
---------------
-
-Sam Morris data
-
-```{r}
-seurat_morris <- readRDS("morris_data/lsk_rna_doub_remv2.Rds")
-```
-
-```{r}
-seurat_morris
-```
-
-
-
-

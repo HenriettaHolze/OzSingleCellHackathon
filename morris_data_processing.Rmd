@@ -1,0 +1,198 @@
+---
+title: "R Notebook"
+output: html_document
+---
+
+Morris data preprocessing and exploration
+
+Sam Morris data has raw counts, pca embedding, clone and cell type annotation. 
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(parallel)
+library(RANN)
+source("mixing_score_functions.R")
+```
+
+
+```{r}
+seurat_morris <- readRDS("data/morris_lab/lsk_rna_doub_remv2.Rds")
+```
+
+```{r}
+seurat_morris
+
+seurat_morris@assays
+
+seurat_morris@reductions
+
+seurat_morris@assays$RNA@counts[1:20,1:20]
+
+seurat_morris@meta.data
+```
+
+```{r}
+DimPlot(seurat_morris, group.by = "cell_type2", reduction = "pal")
+```
+
+
+```{r}
+clone_table <- read.csv("data/morris_lab/CellTag-multi-2023/clone_tables/hsc.rna&atac.r1&2_master_v2.csv")
+```
+
+```{r}
+head(colnames(seurat_morris))
+head(clone_table$cell.bc)
+# reformat cell ID from clone table to match seurat object
+rownames(clone_table) <- gsub(pattern = "^(.*)-(atac|rna)-(.*)", replacement = "\\1-\\3-\\2", x = clone_table$cell.bc)
+
+sum(rownames(clone_table) %in% colnames(seurat_morris))
+sum(!rownames(clone_table) %in% colnames(seurat_morris))
+sum(!colnames(seurat_morris) %in% rownames(clone_table))
+
+seurat_morris <- AddMetaData(seurat_morris, clone_table)
+```
+
+
+```{r}
+seurat_morris@meta.data %>%
+  filter(!is.na(clone.id)) %>%
+  count(clone.id) %>%
+  ggplot(aes(x=n)) +
+  geom_histogram() +
+  theme_bw()
+```
+
+
+```{r fig.width=15}
+seurat_morris@meta.data %>%
+  filter(!is.na(clone.id)) %>%
+  count(clone.id) %>%
+  group_by(n) %>%
+  count(n) %>%
+  # clones smaller than 3 don't make sense anyways
+  filter(n >= 3) %>%
+  ungroup() %>%
+  arrange(desc(n)) %>%
+  mutate(cumsum = cumsum(nn)) %>%
+  ggplot(aes(x=n, y=cumsum)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label=cumsum), position=position_dodge(width=0.9), vjust=-0.25) +
+  theme_bw()
+```
+
+286 clones with >= 20 cells.
+
+```{r}
+clones <- seurat_morris@meta.data %>%
+  filter(!is.na(clone.id)) %>%
+  count(clone.id) %>%
+  arrange(desc(n)) %>%
+  filter(n >= 20) %>%
+  pull(clone.id)
+```
+
+CpG data: 279 clones (>= 8 cells), k=0.3, 20 PCs, 5 cores: 1.3 min
+Morris data: 286 clones (>= 20 cells), k=0.3, 20PCs, 5 cores: 2.7 min
+
+```{r}
+start <- Sys.time()
+set.seed(1)
+df_ms <-
+  MixingScoreSeurat(
+    object = seurat_morris,
+    clones = clones,
+    clone_id = "clone.id",
+    reduction = "pca",
+    dims = seq(1, 20),
+    k = 0.3,
+    cores = 5
+  )
+end <- Sys.time()
+end - start
+```
+
+Distribution of mixing score values is very even between 0 and 1, very few values > 1.
+
+```{r}
+hist(as.matrix(df_ms))
+```
+
+
+```{r}
+h <- heatmap(as.matrix(df_ms), symm = T, cexRow = 0.4, cexCol = 0.4, keep.dendro=TRUE)
+```
+
+```{r}
+row.clusters = as.hclust(h$Rowv)
+
+cluster_anno <- cutree(row.clusters, k=5)  # break into k=3 clusters
+table(cluster_anno)
+```
+
+
+```{r}
+df_homogeneity_similarity <- df_ms %>%
+  rownames_to_column(var = "clone1") %>%
+  pivot_longer(cols = -clone1,
+               names_to = "clone2",
+               values_to = "mixing_score") %>%
+  filter(clone1 != clone2)
+```
+
+```{r}
+distant_clones <- df_homogeneity_similarity %>%
+  arrange(mixing_score) %>%
+  # filter(mean_median < 10) %>%
+  head(5) %>%
+  tail(5) %>%
+  select(clone1, clone2) %>%
+  unlist()
+
+
+distant_clones_highlight <- lapply(distant_clones, function(x) rownames(seurat_morris@meta.data[seurat_morris@meta.data$clone.id == x, ]))
+names(distant_clones_highlight) <- distant_clones
+
+DimPlot(
+  seurat_morris,
+  reduction = "pal",
+  cells.highlight = distant_clones_highlight,
+  cols.highlight = c("blue", "red", "green", "yellow", "orange", "violet")
+) + coord_fixed(ratio = 1)
+```
+
+
+```{r}
+distant_clones <- df_homogeneity_similarity %>%
+  arrange(desc(mixing_score)) %>%
+  # filter(mean_median < 10) %>%
+  head(6) %>%
+  tail(6) %>%
+  select(clone1, clone2) %>%
+  unlist()
+
+
+distant_clones_highlight <- lapply(distant_clones, function(x) rownames(seurat_morris@meta.data[seurat_morris@meta.data$clone.id == x, ]))
+names(distant_clones_highlight) <- distant_clones
+
+DimPlot(
+  seurat_morris,
+  reduction = "pal",
+  cells.highlight = distant_clones_highlight,
+  cols.highlight = c("blue", "red", "green", "yellow", "orange", "violet")
+) + coord_fixed(ratio = 1)
+```
+
+
+
+
+Aggregate counts by clone
+
+```{r}
+seurat_object_aggr <-
+  AggregateClones(seurat_object = seurat_morris)
+
+clone_cluster_markers_mixing_score <- CloneGroupDeg(seurat_object_aggr, cluster_anno)
+clone_cluster_markers_pc_means <- CloneGroupDeg(seurat_object_aggr, clone_pc_means_kmeans$cluster)
+```
